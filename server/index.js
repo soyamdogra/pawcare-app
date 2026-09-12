@@ -1,14 +1,14 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const path = require('path');
 const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
 const cron = require('node-cron');
+const db = require('./db');
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 app.use(cors({
   origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
@@ -16,81 +16,88 @@ app.use(cors({
 }));
 app.use(express.json());
 
-const dbPath = path.resolve(__dirname, 'luhid.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) console.error('Database connection error:', err.message);
-  else console.log('Connected to Luhid Enterprise SQLite database.');
-});
+async function initializeTables() {
+  try {
+    await db.query(`CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT DEFAULT 'pet_parent',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
 
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT DEFAULT 'pet_parent',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS pets (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      breed TEXT NOT NULL,
+      age TEXT NOT NULL,
+      phone TEXT DEFAULT '+919876543210',
+      image TEXT
+    )`);
 
-  db.run(`CREATE TABLE IF NOT EXISTS pets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL,
-    breed TEXT NOT NULL,
-    age TEXT NOT NULL,
-    phone TEXT DEFAULT '+919876543210',
-    image TEXT,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS prescriptions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      pet_name TEXT NOT NULL,
+      doctor_name TEXT NOT NULL,
+      medication TEXT NOT NULL,
+      dosage TEXT NOT NULL,
+      duration TEXT NOT NULL,
+      date_issued TEXT NOT NULL
+    )`);
 
-  db.run(`CREATE TABLE IF NOT EXISTS prescriptions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    pet_name TEXT NOT NULL,
-    doctor_name TEXT NOT NULL,
-    medication TEXT NOT NULL,
-    dosage TEXT NOT NULL,
-    duration TEXT NOT NULL,
-    date_issued TEXT NOT NULL
-  )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS medical_logs (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      pet_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      notes TEXT NOT NULL,
+      date TEXT NOT NULL
+    )`);
 
-  db.run(`CREATE TABLE IF NOT EXISTS medical_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    pet_name TEXT NOT NULL,
-    title TEXT NOT NULL,
-    category TEXT NOT NULL,
-    notes TEXT NOT NULL,
-    date TEXT NOT NULL
-  )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS expenses (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      pet_name TEXT NOT NULL,
+      item TEXT NOT NULL,
+      amount REAL NOT NULL,
+      date TEXT NOT NULL
+    )`);
 
-  db.run(`CREATE TABLE IF NOT EXISTS expenses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    pet_name TEXT NOT NULL,
-    item TEXT NOT NULL,
-    amount REAL NOT NULL,
-    date TEXT NOT NULL
-  )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS reminders (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      pet_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      due_date TEXT NOT NULL,
+      status TEXT DEFAULT 'Pending'
+    )`);
 
-  db.run(`CREATE TABLE IF NOT EXISTS reminders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    pet_name TEXT NOT NULL,
-    title TEXT NOT NULL,
-    due_date TEXT NOT NULL,
-    status TEXT DEFAULT 'Pending'
-  )`);
-});
+    console.log('PostgreSQL tables verified/initialized successfully.');
+  } catch (err) {
+    console.error('Error initializing PostgreSQL tables:', err.message);
+  }
+}
 
-cron.schedule('0 9 * * *', () => {
-  const today = new Date().toISOString().split('T')[0];
-  db.all(`SELECT * FROM reminders WHERE due_date <= ? AND status = 'Pending'`, [today], (err, rows) => {
-    if (!err && rows.length > 0) {
-      console.log(`[Luhid Engine] Dispatched ${rows.length} healthcare reminders for today.`);
+initializeTables();
+
+cron.schedule('0 9 * * *', async () => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const result = await db.query(
+      `SELECT * FROM reminders WHERE due_date <= $1 AND status = 'Pending'`,
+      [today]
+    );
+    if (result.rows.length > 0) {
+      console.log(`[Luhid Engine] Dispatched ${result.rows.length} healthcare reminders for today.`);
     }
-  });
+  } catch (err) {
+    console.error('Cron job error:', err.message);
+  }
 });
 
 app.post('/api/users/register', async (req, res) => {
@@ -99,144 +106,210 @@ app.post('/api/users/register', async (req, res) => {
     if (!name || !email || !password) return res.status(400).json({ message: 'All fields required' });
 
     const password_hash = await bcrypt.hash(password, 10);
-    db.run(`INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)`, [name, email, password_hash], function(err) {
-      if (err) return res.status(400).json({ message: 'Email already exists' });
-      return res.status(201).json({ message: 'Registration successful! Please log in.', userId: this.lastID });
-    });
+    const result = await db.query(
+      `INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id`,
+      [name, email, password_hash]
+    );
+    return res.status(201).json({ message: 'Registration successful! Please log in.', userId: result.rows[0].id });
   } catch (error) {
+    if (error.code === '23505') {
+      return res.status(400).json({ message: 'Email already exists' });
+    }
     return res.status(500).json({ message: 'Server error' });
   }
 });
 
-app.post('/api/users/login', (req, res) => {
-  const { email, password } = req.body;
-  db.get(`SELECT * FROM users WHERE email = ?`, [email], async (err, user) => {
-    if (err || !user) return res.status(401).json({ message: 'Invalid credentials' });
+app.post('/api/users/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const result = await db.query(`SELECT * FROM users WHERE email = $1`, [email]);
+    if (result.rows.length === 0) return res.status(401).json({ message: 'Invalid credentials' });
+    
+    const user = result.rows[0];
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ message: 'Invalid credentials' });
+    
     return res.json({ message: 'Login successful', user: { id: user.id, name: user.name, email: user.email } });
-  });
+  } catch (err) {
+    return res.status(500).json({ message: 'Server error' });
+  }
 });
 
-app.get('/api/pets/:userId', (req, res) => {
-  db.all(`SELECT * FROM pets WHERE user_id = ?`, [req.params.userId], (err, rows) => res.json(rows || []));
+app.get('/api/pets/:userId', async (req, res) => {
+  try {
+    const result = await db.query(`SELECT * FROM pets WHERE user_id = $1`, [req.params.userId]);
+    res.json(result.rows || []);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
-app.post('/api/pets', (req, res) => {
-  const { userId, name, type, breed, age, phone, image } = req.body;
-  db.run(`INSERT INTO pets (user_id, name, type, breed, age, phone, image) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [userId, name, type, breed, age, phone || '+919876543210', image], function(err) {
-      if (err) return res.status(500).json({ message: 'Failed to add pet' });
-      res.status(201).json({ id: this.lastID, userId, name, type, breed, age, phone: phone || '+919876543210', image });
-  });
+app.post('/api/pets', async (req, res) => {
+  try {
+    const { userId, name, type, breed, age, phone, image } = req.body;
+    const resolvedPhone = phone || '+919876543210';
+    const result = await db.query(
+      `INSERT INTO pets (user_id, name, type, breed, age, phone, image) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [userId, name, type, breed, age, resolvedPhone, image]
+    );
+    res.status(201).json({ id: result.rows[0].id, userId, name, type, breed, age, phone: resolvedPhone, image });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to add pet' });
+  }
 });
 
-app.get('/api/reminders/:userId', (req, res) => {
-  db.all(`SELECT * FROM reminders WHERE user_id = ?`, [req.params.userId], (err, rows) => res.json(rows || []));
+app.get('/api/reminders/:userId', async (req, res) => {
+  try {
+    const result = await db.query(`SELECT * FROM reminders WHERE user_id = $1`, [req.params.userId]);
+    res.json(result.rows || []);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
-app.post('/api/reminders', (req, res) => {
-  const { userId, petName, title, dueDate } = req.body;
-  db.run(`INSERT INTO reminders (user_id, pet_name, title, due_date) VALUES (?, ?, ?, ?)`,
-    [userId, petName, title, dueDate], function(err) {
-      res.status(201).json({ id: this.lastID, user_id: userId, pet_name: petName, title, due_date: dueDate, status: 'Pending' });
-  });
+app.post('/api/reminders', async (req, res) => {
+  try {
+    const { userId, petName, title, dueDate } = req.body;
+    const result = await db.query(
+      `INSERT INTO reminders (user_id, pet_name, title, due_date) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [userId, petName, title, dueDate]
+    );
+    res.status(201).json({ id: result.rows[0].id, user_id: userId, pet_name: petName, title, due_date: dueDate, status: 'Pending' });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
-app.get('/api/medical-logs/:userId', (req, res) => {
-  db.all(`SELECT * FROM medical_logs WHERE user_id = ?`, [req.params.userId], (err, rows) => res.json(rows || []));
+app.get('/api/medical-logs/:userId', async (req, res) => {
+  try {
+    const result = await db.query(`SELECT * FROM medical_logs WHERE user_id = $1`, [req.params.userId]);
+    res.json(result.rows || []);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
-app.post('/api/medical-logs', (req, res) => {
-  const { userId, petName, title, category, notes, date } = req.body;
-  db.run(`INSERT INTO medical_logs (user_id, pet_name, title, category, notes, date) VALUES (?, ?, ?, ?, ?, ?)`,
-    [userId, petName, title, category, notes, date], function(err) {
-      res.status(201).json({ id: this.lastID, userId, pet_name: petName, title, category, notes, date });
-  });
+app.post('/api/medical-logs', async (req, res) => {
+  try {
+    const { userId, petName, title, category, notes, date } = req.body;
+    const result = await db.query(
+      `INSERT INTO medical_logs (user_id, pet_name, title, category, notes, date) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [userId, petName, title, category, notes, date]
+    );
+    res.status(201).json({ id: result.rows[0].id, userId, pet_name: petName, title, category, notes, date });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
-app.get('/api/prescriptions/:userId', (req, res) => {
-  db.all(`SELECT * FROM prescriptions WHERE user_id = ?`, [req.params.userId], (err, rows) => res.json(rows || []));
+app.get('/api/prescriptions/:userId', async (req, res) => {
+  try {
+    const result = await db.query(`SELECT * FROM prescriptions WHERE user_id = $1`, [req.params.userId]);
+    res.json(result.rows || []);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
-app.post('/api/prescriptions', (req, res) => {
-  const { userId, petName, doctorName, medication, dosage, duration, dateIssued } = req.body;
-  db.run(`INSERT INTO prescriptions (user_id, pet_name, doctor_name, medication, dosage, duration, date_issued) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [userId, petName, doctorName, medication, dosage, duration, dateIssued], function(err) {
-      res.status(201).json({ id: this.lastID, userId, pet_name: petName, doctor_name: doctorName, medication, dosage, duration, date_issued: dateIssued });
-  });
+app.post('/api/prescriptions', async (req, res) => {
+  try {
+    const { userId, petName, doctorName, medication, dosage, duration, dateIssued } = req.body;
+    const result = await db.query(
+      `INSERT INTO prescriptions (user_id, pet_name, doctor_name, medication, dosage, duration, date_issued) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [userId, petName, doctorName, medication, dosage, duration, dateIssued]
+    );
+    res.status(201).json({ id: result.rows[0].id, userId, pet_name: petName, doctor_name: doctorName, medication, dosage, duration, date_issued: dateIssued });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
-app.get('/api/expenses/:userId', (req, res) => {
-  db.all(`SELECT * FROM expenses WHERE user_id = ?`, [req.params.userId], (err, rows) => res.json(rows || []));
+app.get('/api/expenses/:userId', async (req, res) => {
+  try {
+    const result = await db.query(`SELECT * FROM expenses WHERE user_id = $1`, [req.params.userId]);
+    res.json(result.rows || []);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
-app.post('/api/expenses', (req, res) => {
-  const { userId, petName, item, amount, date } = req.body;
-  db.run(`INSERT INTO expenses (user_id, pet_name, item, amount, date) VALUES (?, ?, ?, ?, ?)`,
-    [userId, petName, item, amount, date], function(err) {
-      res.status(201).json({ id: this.lastID, userId, pet_name: petName, item, amount, date });
-  });
+app.post('/api/expenses', async (req, res) => {
+  try {
+    const { userId, petName, item, amount, date } = req.body;
+    const result = await db.query(
+      `INSERT INTO expenses (user_id, pet_name, item, amount, date) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [userId, petName, item, amount, date]
+    );
+    res.status(201).json({ id: result.rows[0].id, userId, pet_name: petName, item, amount, date });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
-app.get('/api/pets/:id/qrcode', (req, res) => {
-  db.get(`SELECT * FROM pets WHERE id = ?`, [req.params.id], async (err, pet) => {
-    if (err || !pet) return res.status(404).json({ message: 'Pet not found' });
+app.get('/api/pets/:id/qrcode', async (req, res) => {
+  try {
+    const result = await db.query(`SELECT * FROM pets WHERE id = $1`, [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Pet not found' });
 
+    const pet = result.rows[0];
     const contactPhone = pet.phone || '+919876543210';
     const telPayload = `tel:${contactPhone}`;
 
-    try {
-      const dataUrl = await QRCode.toDataURL(telPayload, {
-        errorCorrectionLevel: 'M',
-        type: 'image/png',
-        width: 400,
-        margin: 2,
-        color: { dark: '#0f172a', light: '#ffffff' }
-      });
-      res.json({ qrcode: dataUrl, phone: contactPhone });
-    } catch (qrErr) {
-      res.status(500).json({ message: 'QR Error' });
-    }
-  });
+    const dataUrl = await QRCode.toDataURL(telPayload, {
+      errorCorrectionLevel: 'M',
+      type: 'image/png',
+      width: 400,
+      margin: 2,
+      color: { dark: '#0f172a', light: '#ffffff' }
+    });
+    res.json({ qrcode: dataUrl, phone: contactPhone });
+  } catch (qrErr) {
+    res.status(500).json({ message: 'QR Error' });
+  }
 });
 
-app.get('/api/pets/:id/pdf', (req, res) => {
-  db.get(`SELECT * FROM pets WHERE id = ?`, [req.params.id], (err, pet) => {
-    if (err || !pet) return res.status(404).json({ message: 'Pet not found' });
+app.get('/api/pets/:id/pdf', async (req, res) => {
+  try {
+    const petResult = await db.query(`SELECT * FROM pets WHERE id = $1`, [req.params.id]);
+    if (petResult.rows.length === 0) return res.status(404).json({ message: 'Pet not found' });
+    const pet = petResult.rows[0];
 
-    db.all(`SELECT * FROM medical_logs WHERE pet_name = ?`, [pet.name], (err, logs) => {
-      db.all(`SELECT * FROM prescriptions WHERE pet_name = ?`, [pet.name], (err, rxs) => {
-        const doc = new PDFDocument({ margin: 50 });
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=${pet.name}_Luhid_Report.pdf`);
-        doc.pipe(res);
+    const logsResult = await db.query(`SELECT * FROM medical_logs WHERE pet_name = $1`, [pet.name]);
+    const rxsResult = await db.query(`SELECT * FROM prescriptions WHERE pet_name = $1`, [pet.name]);
 
-        doc.fontSize(24).fillColor('#0f172a').text('Luhid Medical Enterprise', { align: 'left' });
-        doc.fontSize(10).fillColor('#16a34a').text('Every Animal. A Safer Tomorrow.', { align: 'left' });
-        doc.moveDown(1.5);
+    const logs = logsResult.rows;
+    const rxs = rxsResult.rows;
 
-        doc.fontSize(16).fillColor('#334155').text(`Patient Profile: ${pet.name}`);
-        doc.fontSize(11).fillColor('#0f172a')
-           .text(`Species: ${pet.type}`)
-           .text(`Breed: ${pet.breed}`)
-           .text(`Age: ${pet.age}`)
-           .text(`Emergency Contact: ${pet.phone}`);
-        doc.moveDown(1.5);
+    const doc = new PDFDocument({ margin: 50 });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${pet.name}_Luhid_Report.pdf`);
+    doc.pipe(res);
 
-        doc.fontSize(13).fillColor('#2563eb').text('Clinical & Vaccination History:', { underline: true });
-        if (logs.length === 0) doc.fontSize(10).fillColor('#94a3b8').text('No clinical records logged.');
-        logs.forEach(l => doc.fontSize(10).fillColor('#0f172a').text(`• [${l.date}] ${l.title} (${l.category}): ${l.notes}`));
-        doc.moveDown(1.5);
+    doc.fontSize(24).fillColor('#0f172a').text('Luhid Medical Enterprise', { align: 'left' });
+    doc.fontSize(10).fillColor('#16a34a').text('Every Animal. A Safer Tomorrow.', { align: 'left' });
+    doc.moveDown(1.5);
 
-        doc.fontSize(13).fillColor('#16a34a').text('Active Prescriptions:', { underline: true });
-        if (rxs.length === 0) doc.fontSize(10).fillColor('#94a3b8').text('No active prescriptions.');
-        rxs.forEach(r => doc.fontSize(10).fillColor('#0f172a').text(`• ${r.medication} - ${r.dosage} (${r.duration}) | Doctor: ${r.doctor_name}`));
+    doc.fontSize(16).fillColor('#334155').text(`Patient Profile: ${pet.name}`);
+    doc.fontSize(11).fillColor('#0f172a')
+       .text(`Species: ${pet.type}`)
+       .text(`Breed: ${pet.breed}`)
+       .text(`Age: ${pet.age}`)
+       .text(`Emergency Contact: ${pet.phone}`);
+    doc.moveDown(1.5);
 
-        doc.end();
-      });
-    });
-  });
+    doc.fontSize(13).fillColor('#2563eb').text('Clinical & Vaccination History:', { underline: true });
+    if (logs.length === 0) doc.fontSize(10).fillColor('#94a3b8').text('No clinical records logged.');
+    logs.forEach(l => doc.fontSize(10).fillColor('#0f172a').text(`• [${l.date}] ${l.title} (${l.category}): ${l.notes}`));
+    doc.moveDown(1.5);
+
+    doc.fontSize(13).fillColor('#16a34a').text('Active Prescriptions:', { underline: true });
+    if (rxs.length === 0) doc.fontSize(10).fillColor('#94a3b8').text('No active prescriptions.');
+    rxs.forEach(r => doc.fontSize(10).fillColor('#0f172a').text(`• ${r.medication} - ${r.dosage} (${r.duration}) | Doctor: ${r.doctor_name}`));
+
+    doc.end();
+  } catch (err) {
+    res.status(500).json({ message: 'Error generating PDF report' });
+  }
 });
 
 app.listen(PORT, () => console.log(`Luhid backend running on port ${PORT}`));
