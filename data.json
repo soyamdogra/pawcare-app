@@ -1,0 +1,39 @@
+{
+  "animals": [
+    {
+      "id": 1,
+      "name": "Gir Dairy",
+      "type": "Cattle",
+      "age": "3 Years",
+      "owner": "Default Owner"
+    },
+    {
+      "id": 2,
+      "name": "Boer",
+      "type": "Goat",
+      "age": "2 Years",
+      "owner": "Default Owner"
+    },
+    {
+      "id": 1789281351362,
+      "name": "jo",
+      "type": "Cattle",
+      "breed": "Gir Dairy",
+      "age": "13",
+      "phone": "6230835004",
+      "image": "🐄"
+    }
+  ],
+  "users": [
+    {
+      "name": "ss",
+      "email": "enx@gmail.com",
+      "password": "1233"
+    },
+    {
+      "name": "s",
+      "email": "ad0759785@gmail.com",
+      "password": "123"
+    }
+  ]
+}
