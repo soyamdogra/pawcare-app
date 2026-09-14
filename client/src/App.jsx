@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
+const API_URL = import.meta.env.VITE_API_URL || '';
+
 export default function App() {
   const [isLogin, setIsLogin] = useState(false);
   const [name, setName] = useState('');
@@ -81,24 +83,50 @@ export default function App() {
 
   const [showSosModal, setShowSosModal] = useState(false);
   const [qrModalPet, setQrModalPet] = useState(null);
-  const [vetScanPet, setVetScanPet] = useState(null);
+  const [vetScanData, setVetScanData] = useState(null);
+  const [isLoadingScan, setIsLoadingScan] = useState(false);
 
   useEffect(() => {
-    if (user && user.id) {
-      fetch(`/api/pets/${user.id}`).then(res => res.json()).then(data => setPets(data)).catch(err => console.error(err));
-      fetch(`/api/reminders/${user.id}`).then(res => res.json()).then(data => setReminders(data)).catch(err => console.error(err));
-      fetch(`/api/medical-logs/${user.id}`).then(res => res.json()).then(data => setMedicalLogs(data)).catch(err => console.error(err));
-      fetch(`/api/prescriptions/${user.id}`).then(res => res.json()).then(data => setPrescriptions(data)).catch(err => console.error(err));
-      fetch(`/api/expenses/${user.id}`).then(res => res.json()).then(data => setExpenses(data)).catch(err => console.error(err));
+    const currentUserId = user?.id || user?._id;
+    if (user && currentUserId) {
+      fetch(`${API_URL}/api/pets/${currentUserId}`).then(res => res.json()).then(data => setPets(data)).catch(err => console.error(err));
+      fetch(`${API_URL}/api/reminders/${currentUserId}`).then(res => res.json()).then(data => setReminders(data)).catch(err => console.error(err));
+      fetch(`${API_URL}/api/medical-logs/${currentUserId}`).then(res => res.json()).then(data => setMedicalLogs(data)).catch(err => console.error(err));
+      fetch(`${API_URL}/api/prescriptions/${currentUserId}`).then(res => res.json()).then(data => setPrescriptions(data)).catch(err => console.error(err));
+      fetch(`${API_URL}/api/expenses/${currentUserId}`).then(res => res.json()).then(data => setExpenses(data)).catch(err => console.error(err));
+    } else {
+      setPets([]);
+      setReminders([]);
+      setMedicalLogs([]);
+      setPrescriptions([]);
+      setExpenses([]);
+      setAiReport(null);
+      setSelectedPetForAnalysis('');
+      setSymptomsInput('');
     }
   }, [user]);
+
+  const handleVetScan = async (petId) => {
+    setIsLoadingScan(true);
+    try {
+      const res = await fetch(`${API_URL}/api/pets/scan/${petId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to fetch pet scan details');
+      setVetScanData(data);
+    } catch (err) {
+      console.error(err);
+      alert('Could not load scanned pet profile.');
+    } finally {
+      setIsLoadingScan(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setMessage(''); setError('');
     const endpoint = isLogin ? '/api/users/login' : '/api/users/register';
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(isLogin ? { email, password } : { name, email, password })
@@ -120,12 +148,19 @@ export default function App() {
   const handleAddPet = async (e) => {
     e.preventDefault();
     if (!newPetName || !newPetAge || !newPetPhone) return;
+    
+    const currentUserId = user?.id || user?._id;
+    if (!currentUserId) {
+      console.error('No active user ID found');
+      return;
+    }
+
     try {
-      const response = await fetch('/api/pets', {
+      const response = await fetch(`${API_URL}/api/pets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          userId: user.id, 
+          userId: currentUserId, 
           name: newPetName, 
           type: selectedCategory, 
           breed: selectedBreedObj.breed, 
@@ -135,18 +170,18 @@ export default function App() {
         })
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message);
+      if (!response.ok) throw new Error(data.message || 'Failed to add pet');
       setPets([...pets, data]);
       setNewPetName(''); setNewPetAge(''); setNewPetPhone('');
     } catch (err) {
-      console.error(err);
+      console.error('Error adding pet:', err);
     }
   };
 
   const handleDeletePet = async (petId) => {
     if (!window.confirm('Are you sure you want to remove this animal profile?')) return;
     try {
-      await fetch(`/api/pets/${petId}`, { method: 'DELETE' });
+      await fetch(`${API_URL}/api/pets/${petId}`, { method: 'DELETE' });
       setPets(pets.filter(p => p.id !== petId && p._id !== petId));
     } catch (err) {
       console.error('Failed to delete', err);
@@ -156,12 +191,13 @@ export default function App() {
   const handleAddPrescription = async (e) => {
     e.preventDefault();
     if (!rxPet || !rxMedication || !rxDosage) return;
+    const currentUserId = user?.id || user?._id;
     try {
-      const response = await fetch('/api/prescriptions', {
+      const response = await fetch(`${API_URL}/api/prescriptions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          userId: user.id, petName: rxPet, doctorName: 'Dr. Ananya Sharma', medication: rxMedication, dosage: rxDosage, duration: '7 days', dateIssued: new Date().toISOString().split('T')[0] 
+          userId: currentUserId, petName: rxPet, doctorName: 'Dr. Ananya Sharma', medication: rxMedication, dosage: rxDosage, duration: '7 days', dateIssued: new Date().toISOString().split('T')[0] 
         })
       });
       const data = await response.json();
@@ -173,12 +209,13 @@ export default function App() {
   const handleAddMedicalLog = async (e) => {
     e.preventDefault();
     if (!logPet || !logTitle) return;
+    const currentUserId = user?.id || user?._id;
     try {
-      const response = await fetch('/api/medical-logs', {
+      const response = await fetch(`${API_URL}/api/medical-logs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          userId: user.id, petName: logPet, title: logTitle, category: 'Routine Check', notes: 'Checked normal vitals', date: new Date().toISOString().split('T')[0] 
+          userId: currentUserId, petName: logPet, title: logTitle, category: 'Routine Check', notes: 'Checked normal vitals', date: new Date().toISOString().split('T')[0] 
         })
       });
       const data = await response.json();
@@ -190,12 +227,13 @@ export default function App() {
   const handleAddExpense = async (e) => {
     e.preventDefault();
     if (!expPet || !expItem || !expAmount) return;
+    const currentUserId = user?.id || user?._id;
     try {
-      const response = await fetch('/api/expenses', {
+      const response = await fetch(`${API_URL}/api/expenses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          userId: user.id, petName: expPet, item: expItem, amount: parseFloat(expAmount), date: new Date().toISOString().split('T')[0] 
+          userId: currentUserId, petName: expPet, item: expItem, amount: parseFloat(expAmount), date: new Date().toISOString().split('T')[0] 
         })
       });
       const data = await response.json();
@@ -207,12 +245,13 @@ export default function App() {
   const handleAddReminder = async (e) => {
     e.preventDefault();
     if (!remPet || !remTitle || !remDate) return;
+    const currentUserId = user?.id || user?._id;
     try {
-      const response = await fetch('/api/reminders', {
+      const response = await fetch(`${API_URL}/api/reminders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          userId: user.id, petName: remPet, title: remTitle, dueDate: remDate 
+          userId: currentUserId, petName: remPet, title: remTitle, dueDate: remDate 
         })
       });
       const data = await response.json();
@@ -227,22 +266,25 @@ export default function App() {
     setIsAnalyzing(true);
     setAiReport(null);
     try {
-      const response = await fetch('/api/diagnose', {
+      const response = await fetch(`${API_URL}/api/diagnose`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: user.email, symptoms: symptomsInput, petName: selectedPetForAnalysis })
       });
       const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to process AI diagnosis');
+      
       setAiReport({
         petName: selectedPetForAnalysis,
-        summary: data.diagnosis || 'Gemini AI Engine Triage: Vitals stable, optimal recovery indicators detected.',
-        recommendation: data.recommendation || 'Maintain prescribed hydration levels and review behavioral shifts.'
+        summary: data.diagnosis,
+        recommendation: data.recommendation
       });
     } catch (err) {
+      console.error('AI Diagnosis Error:', err);
       setAiReport({
         petName: selectedPetForAnalysis,
-        summary: 'AI Engine operational assessment completed locally.',
-        recommendation: 'Monitor vital statistics closely.'
+        summary: `Error processing diagnosis: ${err.message}`,
+        recommendation: 'Please verify server configuration and GEMINI_API_KEY settings.'
       });
     } finally {
       setIsAnalyzing(false);
@@ -274,7 +316,7 @@ export default function App() {
 
   const downloadPdf = async (petId) => {
     try {
-      const response = await fetch(`/api/pets/${petId}/pdf`);
+      const response = await fetch(`${API_URL}/api/pets/${petId}/pdf`);
       const blob = await response.blob();
       const link = document.createElement('a');
       link.href = window.URL.createObjectURL(blob);
@@ -398,7 +440,7 @@ export default function App() {
                     <h4 style={{ margin: '0 0 2px 0', fontSize: '16px', color: '#0f172a' }}>{pet.name}</h4>
                     <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: '#64748b' }}>{pet.breed} • Age: {pet.age}</p>
                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      <button onClick={() => setVetScanPet(pet)} style={{ padding: '5px 10px', background: '#047857', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>🩺 Vet Scan</button>
+                      <button onClick={() => handleVetScan(pet.id || pet._id)} disabled={isLoadingScan} style={{ padding: '5px 10px', background: '#047857', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>🩺 Vet Scan</button>
                       <button onClick={() => setQrModalPet(pet)} style={{ padding: '5px 10px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>QR Pass</button>
                       <button onClick={() => downloadPdf(pet.id || pet._id)} style={{ padding: '5px 10px', background: '#64748b', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>PDF</button>
                       <button onClick={() => handleDeletePet(pet.id || pet._id)} style={{ padding: '5px 10px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>Remove</button>
@@ -566,51 +608,62 @@ export default function App() {
 
         {qrModalPet && (
           <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-            <div style={{ background: '#fff', padding: '35px', borderRadius: '20px', width: '360px', textAlign: 'center', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
-              <h3 style={{ marginTop: 0, color: '#0f172a' }}>Dual-Role Direct-Call QR Tag</h3>
+            <div style={{ background: '#fff', padding: '35px', borderRadius: '20px', width: '380px', textAlign: 'center', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
+              <h3 style={{ marginTop: 0, color: '#0f172a' }}>Smart Vet & Owner QR Tag</h3>
               <p style={{ fontSize: '13px', color: '#64748b', margin: '4px 0 15px 0' }}>Animal: <strong>{qrModalPet.name}</strong> ({qrModalPet.breed})</p>
               
               <div style={{ background: '#f8fafc', padding: '15px', borderRadius: '14px', border: '1px solid #e2e8f0', display: 'inline-block' }}>
                 <img 
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=tel:${encodeURIComponent(qrModalPet.phone || '+18005550199')}`} 
-                  alt="Direct-Call Scannable QR Tag" 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${API_URL}/api/pets/scan/${qrModalPet.id || qrModalPet._id}`)}`} 
+                  alt="Scannable Pet Profile QR Tag" 
                   style={{ width: '180px', height: '180px', display: 'block', margin: '0 auto' }} 
                 />
               </div>
 
-              <p style={{ fontSize: '12px', color: '#047857', fontWeight: 'bold', marginTop: '12px' }}>📞 Scan Action: tel:{qrModalPet.phone}</p>
+              <p style={{ fontSize: '12px', color: '#047857', fontWeight: 'bold', marginTop: '12px' }}>📱 Scanning loads full profile & owner contacts</p>
               
-              <a href={`tel:${qrModalPet.phone}`} style={{ display: 'block', marginTop: '10px', padding: '10px', background: '#10b981', color: '#fff', borderRadius: '8px', textDecoration: 'none', fontWeight: 'bold', fontSize: '13px' }}>
-                Test Call Owner Now
-              </a>
+              <button onClick={() => handleVetScan(qrModalPet.id || qrModalPet._id)} style={{ display: 'block', width: '100%', marginTop: '10px', padding: '10px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>
+                Preview Scanned Profile View
+              </button>
 
               <button onClick={() => setQrModalPet(null)} style={{ marginTop: '15px', padding: '8px 20px', background: '#334155', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>Close</button>
             </div>
           </div>
         )}
 
-        {vetScanPet && (
+        {vetScanData && (
           <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(5px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-            <div style={{ background: '#fff', padding: '35px', borderRadius: '24px', width: '450px', textAlign: 'left', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', border: '2px solid #047857' }}>
+            <div style={{ background: '#fff', padding: '35px', borderRadius: '24px', width: '480px', textAlign: 'left', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', border: '2px solid #047857', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                <span style={{ background: '#ecfdf5', color: '#047857', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase' }}>Vet Scan (Authenticated EHR)</span>
-                <span style={{ fontSize: '12px', color: '#64748b' }}>Secure ID: #{vetScanPet.id || vetScanPet._id}</span>
+                <span style={{ background: '#ecfdf5', color: '#047857', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase' }}>Scanned EHR & Owner Details</span>
+                <span style={{ fontSize: '12px', color: '#64748b' }}>ID: #{vetScanData.pet.id}</span>
               </div>
-              <h2 style={{ margin: '0 0 5px 0', color: '#0f172a' }}>🩺 {vetScanPet.name}</h2>
-              <p style={{ margin: '0 0 20px 0', fontSize: '13px', color: '#64748b' }}>Breed: {vetScanPet.breed} • Age: {vetScanPet.age} • Emergency Tel: {vetScanPet.phone}</p>
+              <h2 style={{ margin: '0 0 5px 0', color: '#0f172a' }}>🩺 {vetScanData.pet.name}</h2>
+              <p style={{ margin: '0 0 15px 0', fontSize: '13px', color: '#64748b' }}>Breed: {vetScanData.pet.type} ({vetScanData.pet.breed}) • Age: {vetScanData.pet.age}</p>
               
+              <div style={{ background: '#f0fdf4', padding: '15px', borderRadius: '12px', border: '1px solid #bbf7d0', marginBottom: '15px' }}>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '14px', color: '#166534' }}>👤 Owner Contact Details</h4>
+                <p style={{ margin: '2px 0', fontSize: '13px', color: '#15803d' }}><strong>Name:</strong> {vetScanData.ownerDetails.name}</p>
+                <p style={{ margin: '2px 0', fontSize: '13px', color: '#15803d' }}><strong>Email:</strong> {vetScanData.ownerDetails.email}</p>
+                <p style={{ margin: '6px 0 0 0', fontSize: '14px' }}>
+                  📞 <strong>Emergency Phone:</strong> <a href={`tel:${vetScanData.ownerDetails.emergencyPhone}`} style={{ color: '#047857', fontWeight: 'bold' }}>{vetScanData.ownerDetails.emergencyPhone}</a>
+                </p>
+              </div>
+
               <div style={{ background: '#f8fafc', padding: '15px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
-                <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#0f172a' }}>⚡ 30-Second Medical History</h4>
-                <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: '#334155', display: 'grid', gap: '6px' }}>
-                  <li>Last Vaccination: Completed (Rabies & FMD Booster)</li>
-                  <li>Active Prescriptions: 0 critical alerts</li>
-                  <li>Recent Triage Status: Stable health indicator</li>
-                </ul>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#0f172a' }}>⚡ Vaccination & Medical History</h4>
+                {vetScanData.vaccinationHistory.length > 0 ? (
+                  vetScanData.vaccinationHistory.map((v, i) => (
+                    <div key={i} style={{ fontSize: '13px', color: '#334155', marginBottom: '4px' }}>• {v.title || v.notes} ({v.date || 'Recent'})</div>
+                  ))
+                ) : (
+                  <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>No active vaccination logs recorded yet.</p>
+                )}
               </div>
 
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={() => downloadPdf(vetScanPet.id || vetScanPet._id)} style={{ flex: 1, padding: '10px', background: '#047857', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>Download Full EHR PDF</button>
-                <button onClick={() => setVetScanPet(null)} style={{ padding: '10px 20px', background: '#475569', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>Close</button>
+                <button onClick={() => downloadPdf(vetScanData.pet.id)} style={{ flex: 1, padding: '10px', background: '#047857', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>Download Full EHR PDF</button>
+                <button onClick={() => setVetScanData(null)} style={{ padding: '10px 20px', background: '#475569', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>Close</button>
               </div>
             </div>
           </div>

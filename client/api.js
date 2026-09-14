@@ -8,9 +8,14 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Initialize Google Gen AI client with GEMINI_API_KEY from .env
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Safely initialize Google Gen AI client helper
+const getAiClient = () => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  return new GoogleGenAI({ apiKey });
+};
 
 // In-memory data stores for development & testing
 const users = [];
@@ -107,23 +112,26 @@ app.post('/api/reminders', (req, res) => {
 app.post('/api/diagnose', async (req, res) => {
   try {
     const { symptoms, petName } = req.body;
-    if (!process.env.GEMINI_API_KEY) {
-      console.warn("API key should be set when using the Gemini API.");
+    const aiClient = getAiClient();
+    
+    if (!aiClient) {
+      console.warn("GEMINI_API_KEY is missing in server environment variables.");
+      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the Azure App Service backend.' });
     }
     
     // Call Gemini API using the official @google/genai SDK
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const response = await aiClient.models.generateContent({
+      model: 'gemini-1.5-flash',
       contents: `You are an expert veterinary intelligence assistant. Analyze the following symptoms for animal "${petName || 'Patient'}": "${symptoms}". Provide a concise clinical summary and practical recommendations.`
     });
 
     res.json({
-      diagnosis: response.text,
+      diagnosis: response.text || 'No diagnosis generated.',
       recommendation: "Ensure regular hydration and consult local veterinary specialist if conditions persist."
     });
   } catch (error) {
     console.error('Gemini API Error:', error);
-    res.status(500).json({ error: 'Failed to process AI diagnosis via Gemini API.' });
+    res.status(500).json({ error: error.message || 'Failed to process AI diagnosis via Gemini API.' });
   }
 });
 
