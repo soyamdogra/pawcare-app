@@ -116,7 +116,7 @@ app.post('/api/diagnose', async (req, res) => {
     
     if (!aiClient) {
       console.warn("GEMINI_API_KEY is missing in server environment variables.");
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the Azure App Service backend.' });
+      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the Render backend environment variables.' });
     }
     
     // Call Gemini API using the official @google/genai SDK

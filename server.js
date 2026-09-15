@@ -234,7 +234,7 @@ app.post('/api/ai-search', async (req, res) => {
 
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
       contents: `
         You are the intelligent search engine and veterinary reasoning brain of Luhid.
         Here is the user's complete secure database:
@@ -283,7 +283,7 @@ app.post('/api/diagnose', async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
       contents: `${systemInstruction}\n\nAnalyze these exact symptoms for animal "${petName || 'Patient'}": "${symptoms}". Provide clinical summary and actionable recommendations tailored precisely to these symptoms.`
     });
 
