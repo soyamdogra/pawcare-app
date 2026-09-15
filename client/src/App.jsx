@@ -81,6 +81,11 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isListening, setIsListening] = useState(false);
 
+  // AI Search Engine States
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResult, setSearchResult] = useState('');
+  const [isSearchingAI, setIsSearchingAI] = useState(false);
+
   const [showSosModal, setShowSosModal] = useState(false);
   const [qrModalPet, setQrModalPet] = useState(null);
   const [vetScanData, setVetScanData] = useState(null);
@@ -103,6 +108,8 @@ export default function App() {
       setAiReport(null);
       setSelectedPetForAnalysis('');
       setSymptomsInput('');
+      setSearchResult('');
+      setSearchQuery('');
     }
   }, [user]);
 
@@ -150,10 +157,7 @@ export default function App() {
     if (!newPetName || !newPetAge || !newPetPhone) return;
     
     const currentUserId = user?.id || user?._id;
-    if (!currentUserId) {
-      console.error('No active user ID found');
-      return;
-    }
+    if (!currentUserId) return;
 
     try {
       const response = await fetch(`${API_URL}/api/pets`, {
@@ -174,7 +178,7 @@ export default function App() {
       setPets([...pets, data]);
       setNewPetName(''); setNewPetAge(''); setNewPetPhone('');
     } catch (err) {
-      console.error('Error adding pet:', err);
+      alert(err.message || 'Error adding pet');
     }
   };
 
@@ -284,17 +288,40 @@ export default function App() {
       setAiReport({
         petName: selectedPetForAnalysis,
         summary: `Error processing diagnosis: ${err.message}`,
-        recommendation: 'Please verify server configuration and GEMINI_API_KEY settings.'
+        recommendation: 'Please verify server configuration.'
       });
     } finally {
       setIsAnalyzing(false);
     }
   };
 
+  // AI Knowledge Search Handler
+  const handleAISearch = async () => {
+    if (!searchQuery.trim()) return;
+    setIsSearchingAI(true);
+    setSearchResult('');
+    const currentUserId = user?.id || user?._id;
+    try {
+      const response = await fetch(`${API_URL}/api/ai-search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentUserId, query: searchQuery })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Failed to query AI search engine');
+      setSearchResult(data.answer || 'No insights returned.');
+    } catch (err) {
+      console.error('AI Search Error:', err);
+      setSearchResult('Error connecting to Luhid AI Brain.');
+    } finally {
+      setIsSearchingAI(false);
+    }
+  };
+
   const startVoiceInput = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert('Speech recognition is not supported in this browser. Please use Chrome or Safari.');
+      alert('Speech recognition is not supported in this browser.');
       return;
     }
     const recognition = new SpeechRecognition();
@@ -362,15 +389,35 @@ export default function App() {
 
         <main style={{ padding: '40px', maxWidth: '1400px', margin: '0 auto', display: 'grid', gap: '30px' }}>
           
-          <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: '#fff', padding: '24px 32px', borderRadius: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', boxShadow: '0 10px 25px rgba(15,23,42,0.1)' }}>
-            <div>
-              <span style={{ background: '#10b981', color: '#fff', padding: '4px 10px', borderRadius: '6px', fontWeight: 'bold', fontSize: '11px', textTransform: 'uppercase' }}>Enterprise Architecture Active</span>
-              <h3 style={{ margin: '8px 0 0 0', fontSize: '18px' }}>Azure Static Web Apps & Node.js AI Backend</h3>
+          {/* AI Search Engine Brain Component */}
+          <div style={{ background: '#ffffff', padding: '28px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.02)' }}>
+            <h3 style={{ margin: '0 0 10px 0', color: '#047857', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '18px' }}>
+              🧠 Luhid AI Knowledge Search Engine
+            </h3>
+            <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: '#64748b' }}>Ask anything about your livestock, medications, expenses, or care schedules using natural language.</p>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <input 
+                type="text" 
+                placeholder="e.g., 'Do I have any cattle due for check-ups?' or 'Summarize expenses for my pets'..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ flex: 1, padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', fontSize: '14px', outline: 'none' }}
+              />
+              <button 
+                onClick={handleAISearch}
+                disabled={isSearchingAI}
+                style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 4px 12px rgba(16,185,129,0.3)' }}
+              >
+                {isSearchingAI ? 'Thinking...' : 'Search & Recommend'}
+              </button>
             </div>
-            <div style={{ display: 'flex', gap: '20px', fontSize: '13px', color: '#94a3b8' }}>
-              <span>Registered Animals: <strong style={{ color: '#fff' }}>{pets.length}</strong></span>
-              <span>Cloud Status: <strong style={{ color: '#34d399' }}>Connected</strong></span>
-            </div>
+
+            {searchResult && (
+              <div style={{ marginTop: '20px', background: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', fontSize: '14px', lineHeight: '1.6', color: '#334155' }}>
+                <strong style={{ color: '#047857' }}>AI Brain Insights & Recommendations:</strong>
+                <div style={{ marginTop: '8px', whiteSpace: 'pre-wrap' }}>{searchResult}</div>
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
@@ -482,7 +529,6 @@ export default function App() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '30px' }}>
-            
             <div style={{ background: '#ffffff', padding: '35px', borderRadius: '24px', border: '1px solid #e2e8f0' }}>
               <h3 style={{ marginTop: 0 }}>💊 Prescriptions Manager</h3>
               <form onSubmit={handleAddPrescription} style={{ display: 'grid', gap: '12px', marginTop: '15px' }}>
@@ -521,11 +567,9 @@ export default function App() {
                 ))}
               </div>
             </div>
-
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '30px' }}>
-            
             <div style={{ background: '#ffffff', padding: '35px', borderRadius: '24px', border: '1px solid #e2e8f0' }}>
               <h3 style={{ marginTop: 0 }}>💰 Expense Tracker</h3>
               <form onSubmit={handleAddExpense} style={{ display: 'grid', gap: '12px', marginTop: '15px' }}>
@@ -567,27 +611,7 @@ export default function App() {
                 ))}
               </div>
             </div>
-
           </div>
-
-          <div style={{ background: '#ffffff', padding: '35px', borderRadius: '24px', border: '1px solid #e2e8f0' }}>
-            <h3 style={{ marginTop: 0 }}>🩺 Expert Doctor Support & Directory</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', marginTop: '15px' }}>
-              {doctorsList.map(doc => (
-                <div key={doc.id} style={{ border: '1px solid #e2e8f0', borderRadius: '16px', padding: '20px', background: '#f8fafc', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div>
-                    <h4 style={{ margin: '0 0 4px 0', fontSize: '16px' }}>{doc.name}</h4>
-                    <p style={{ margin: '0 0 6px 0', fontSize: '13px', color: '#475569' }}>{doc.specialty}</p>
-                    <p style={{ margin: '0 0 14px 0', fontSize: '12px', color: '#64748b' }}>{doc.exp} • {doc.phone}</p>
-                  </div>
-                  <a href={`tel:${doc.phone.replace(/\s+/g, '')}`} style={{ textAlign: 'center', padding: '10px', background: '#0284c7', color: '#fff', borderRadius: '10px', textDecoration: 'none', fontWeight: '600', fontSize: '13px' }}>
-                    Call Specialist
-                  </a>
-                </div>
-              ))}
-            </div>
-          </div>
-
         </main>
 
         {showSosModal && (

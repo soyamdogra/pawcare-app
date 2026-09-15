@@ -55,7 +55,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'Online',
     message: 'Luhid Veterinary Intelligence API',
-    endpoints: ['/api/health', '/api/users/login', '/api/users/register', '/api/pets', '/api/diagnose', '/api/pets/scan/:id']
+    endpoints: ['/api/health', '/api/users/login', '/api/users/register', '/api/pets', '/api/diagnose', '/api/pets/scan/:id', '/api/ai-search']
   });
 });
 
@@ -101,8 +101,15 @@ app.get('/api/pets/:userId', (req, res) => {
 });
 
 app.post('/api/pets', (req, res) => {
-  const { userId } = req.body || {};
+  const { userId, name } = req.body || {};
   if (!userId) return res.status(400).json({ message: 'Unauthorized: missing userId' });
+
+  // Prevent duplicate pet profiles with the same name for the same user account
+  const existingPet = db.pets.find(p => p.userId === userId && p.name.trim().toLowerCase() === (name || '').trim().toLowerCase());
+  if (existingPet) {
+    return res.status(400).json({ message: 'An animal profile with this name already exists for your account.' });
+  }
+
   const newPet = { id: Date.now().toString(), ...req.body };
   db.pets.push(newPet);
   saveData();
@@ -197,6 +204,56 @@ app.post('/api/reminders', (req, res) => {
   res.status(201).json(item);
 });
 
+// --- AI-Powered Search Engine & Recommendation Brain ---
+app.post('/api/ai-search', async (req, res) => {
+  const { userId, query } = req.body || {};
+  if (!userId || !query) {
+    return res.status(400).json({ message: 'Missing userId or query' });
+  }
+
+  // Gather isolated data for this user
+  const userPets = db.pets.filter(p => p.userId === userId);
+  const userPrescriptions = db.prescriptions.filter(pr => pr.userId === userId);
+  const userLogs = db.medicalLogs.filter(l => l.userId === userId);
+  const userExpenses = db.expenses.filter(e => e.userId === userId);
+  const userReminders = db.reminders.filter(r => r.userId === userId);
+
+  const contextData = {
+    pets: userPets,
+    prescriptions: userPrescriptions,
+    medicalLogs: userLogs,
+    expenses: userExpenses,
+    reminders: userReminders
+  };
+
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ answer: 'AI Search Error: GEMINI_API_KEY is not configured on the server.' });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `
+        You are the intelligent search engine and veterinary reasoning brain of Luhid.
+        Here is the user's complete secure database:
+        ${JSON.stringify(contextData, null, 2)}
+
+        User's Natural Language Question: "${query}"
+
+        Analyze this data thoroughly. Provide precise answers, summarize records, and deliver actionable veterinary care recommendations based strictly on the user's information. Be professional and well-structured.
+      `
+    });
+
+    const answerText = response.text || (response.candidates && response.candidates[0]?.content?.parts?.[0]?.text) || 'Search completed.';
+    res.json({ answer: answerText });
+  } catch (error) {
+    console.error('AI Search Error:', error);
+    res.status(500).json({ answer: 'Failed to process intelligent search query at the moment.' });
+  }
+});
+
 // --- Gemini AI Triage Engine Route with Dynamic Symptom-Aware Fallback ---
 app.post('/api/diagnose', async (req, res) => {
   const { symptoms, petName } = req.body || {};
@@ -209,7 +266,7 @@ app.post('/api/diagnose', async (req, res) => {
 
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
+      model: 'gemini-2.5-flash',
       contents: `You are an expert veterinary intelligence assistant. Analyze these exact symptoms for animal "${petName || 'Patient'}": "${symptoms}". Provide a unique, specific clinical summary and actionable recommendations tailored precisely to these symptoms.`
     });
 
@@ -283,5 +340,5 @@ app.get('/api/pets/:id/pdf', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Luhid Backend running on port ${PORT} (Persistent Storage & User Isolation Active)`);
+  console.log(`Luhid Backend running on port ${PORT} (Persistent Storage, Duplicate Check & AI Search Brain Active)`);
 });
