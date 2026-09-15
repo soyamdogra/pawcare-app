@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+const API_URL ="https://luhid-a3f4ayh6fdbjgzdn.eastasia-01.azurewebsites.net"; 
 
 export default function App() {
   const [isLogin, setIsLogin] = useState(false);
@@ -273,7 +273,7 @@ export default function App() {
       const response = await fetch(`${API_URL}/api/diagnose`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email, symptoms: symptomsInput, petName: selectedPetForAnalysis })
+        body: JSON.stringify({ symptoms: symptomsInput, petName: selectedPetForAnalysis })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Failed to process AI diagnosis');

@@ -254,9 +254,20 @@ app.post('/api/ai-search', async (req, res) => {
   }
 });
 
-// --- Gemini AI Triage Engine Route with Dynamic Symptom-Aware Fallback ---
+// --- Gemini AI Triage Engine Route with Dynamic Symptom-Aware Fallback & Emergency Guardrails ---
 app.post('/api/diagnose', async (req, res) => {
   const { symptoms, petName } = req.body || {};
+  const symptomLower = (symptoms || '').toLowerCase();
+
+  // Check for critical / fatal keywords upfront
+  const isEmergency = symptomLower.includes('died') || 
+                      symptomLower.includes('death') || 
+                      symptomLower.includes('unresponsive') || 
+                      symptomLower.includes('bleeding') || 
+                      symptomLower.includes('poison') || 
+                      symptomLower.includes('unconscious') ||
+                      symptomLower.includes('not breathing');
+
   try {
     const apiKey = process.env.GEMINI_API_KEY;
 
@@ -265,26 +276,40 @@ app.post('/api/diagnose', async (req, res) => {
     }
 
     const ai = new GoogleGenAI({ apiKey });
+    
+    const systemInstruction = `
+      You are an expert veterinary clinical triage intelligence assistant.
+      CRITICAL SAFETY RULE: If the user inputs fatal, critical, or life-threatening keywords (such as "died", "unresponsive", "bleeding", "poison", "unconscious", "not breathing"), you MUST NOT give routine monitoring or comfort advice. Instead, you must immediately output a red-level EMERGENCY TRIAGE warning instructing immediate physical intervention, emergency veterinary hospital transport, and urgent care protocols.
+    `;
+
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: `You are an expert veterinary intelligence assistant. Analyze these exact symptoms for animal "${petName || 'Patient'}": "${symptoms}". Provide a unique, specific clinical summary and actionable recommendations tailored precisely to these symptoms.`
+      contents: `${systemInstruction}\n\nAnalyze these exact symptoms for animal "${petName || 'Patient'}": "${symptoms}". Provide clinical summary and actionable recommendations tailored precisely to these symptoms.`
     });
 
     const diagnosisText = response.text || (response.candidates && response.candidates[0]?.content?.parts?.[0]?.text) || 'Diagnostic assessment completed.';
 
+    let finalRecommendation = 'Follow the specialized clinical steps above and consult your veterinarian if condition changes.';
+    if (isEmergency) {
+      finalRecommendation = '🚨 EMERGENCY: Transport the animal to the nearest 24/7 veterinary emergency hospital immediately. Do not wait.';
+    }
+
     return res.json({
       diagnosis: diagnosisText,
-      recommendation: 'Follow the specialized clinical steps above and consult your veterinarian if condition changes.'
+      recommendation: finalRecommendation
     });
+
   } catch (error) {
     console.error('Gemini API Error details:', error);
     
-    // Dynamic Symptom Matching Engine (Guarantees unique answers per symptom)
-    const symptomLower = (symptoms || '').toLowerCase();
+    // Fallback logic with Emergency override
     let specificDiagnosis = `Clinical Triage for ${petName || 'Patient'}: Analysis of symptoms ("${symptoms}") indicates unique physiological strain requiring careful monitoring.`;
     let specificRec = 'Keep the animal comfortable, track any changes in behavior, and consult a local vet if condition persists.';
 
-    if (symptomLower.includes('loose motion') || symptomLower.includes('diarrhea') || symptomLower.includes('stool') || symptomLower.includes('motion')) {
+    if (isEmergency) {
+      specificDiagnosis = `🚨 CRITICAL EMERGENCY TRIAGE for ${petName || 'Patient'}: Reports of ("${symptoms}") indicate a potentially fatal or life-threatening condition requiring instant medical intervention.`;
+      specificRec = 'URGENT: Immediately rush the animal to the nearest emergency veterinary hospital. Clear airway, keep them warm, and seek professional emergency care right now.';
+    } else if (symptomLower.includes('loose motion') || symptomLower.includes('diarrhea') || symptomLower.includes('stool') || symptomLower.includes('motion')) {
       specificDiagnosis = `Gastrointestinal Triage for ${petName || 'Patient'}: Reports of "${symptoms}" point toward potential dietary indiscretion, bacterial imbalance, or intestinal parasites.`;
       specificRec = 'Withhold heavy food for 12 hours, provide fresh water mixed with rehydration electrolytes, and monitor stool consistency closely.';
     } else if (symptomLower.includes('fever') || symptomLower.includes('temperature') || symptomLower.includes('hot') || symptomLower.includes('shivering')) {
